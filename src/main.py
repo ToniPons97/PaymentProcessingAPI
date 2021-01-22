@@ -1,27 +1,22 @@
 from flask import Flask
-from flask_restful import Resource, Api, abort
+from flask_restful import Resource, Api, abort, fields, marshal_with
 from flask_sqlalchemy import SQLAlchemy
 from apiArgsBuilder import buildArgsParser
 from processCreditCardNumber import isValid, formatCreditCardNumber
-import datetime
+from datetime import datetime
+import requests
 
 app = Flask(__name__)
 api = Api(app)
 
+app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///database.db"
+db = SQLAlchemy(app)
+
 config = buildArgsParser()
-customerInfo = {}
 
 def invalidAmount(amount):
     if amount <= 0:
         abort(400, message="Invalid Amount. Amount should be a float greater than 0.")
-
-def customerNotInDB(customer_id):
-    if customer_id not in customerInfo:
-        abort(404, message="Customer with id {}".format(customer_id) + " not present in database.")
-
-def customerInDB(customer_id):
-    if customer_id in customerInfo:
-        abort(409, message="Customer with id {}".format(customer_id) + " already present in database.")
 
 def invalidCreditCardNumber(creditCardNumber):
     if not isValid(creditCardNumber):
@@ -31,9 +26,8 @@ def invalidCreditCardNumber(creditCardNumber):
 
 def invalidExpirationDate(dateString):
     try:
-        date_obj = datetime.datetime.strptime(dateString, "%Y-%m-%d %H:%M:%S.%f")
-
-        if not (date_obj > datetime.datetime.now()):
+        date_obj = datetime.strptime(dateString, "%Y-%m")
+        if not (date_obj > datetime.now()):
             abort(400, message="Provided expiration date is in the past.")
     except ValueError:
         abort(400, message="Provided expiration date is in the wrong format.")
@@ -43,33 +37,56 @@ def invalidSecurityCode(securityCode):
 
     if not (securityCode.isdigit() and len(securityCode) == 3):
         abort(400, message="Invalid security code. Security code must be provided as a string and should be a valid security code (3-digit code).")
-    
 
-class ProcessPayment(Resource):
-    def get(self, customer_id):
-        customerNotInDB(customer_id)
-        return customerInfo[customer_id]
+resource_fields = {
+    "id" : fields.Integer,
+    "CreditCardNumber" : fields.String,
+    "CardHolder" : fields.String,
+    "ExpirationDate" : fields.DateTime,
+    "SecurityCode" : fields.String,
+    "Amount" : fields.Float,
+    "PaymentGateway" : fields.String
+}
 
-    def put(self, customer_id):
-        customerInDB(customer_id)
- 
+config = buildArgsParser()
+
+class PaymentModel(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    CreditCardNumber = db.Column(db.String(16), nullable=False)
+    CardHolder = db.Column(db.String(30), nullable=False)
+    ExpirationDate = db.Column(db.DateTime, nullable=False)
+    SecurityCode = db.Column(db.String(3), nullable=True)
+    Amount = db.Column(db.Float, nullable=False)
+    PaymentGateway = db.Column(db.String(25), nullable=False)
+    def __repr__(self):
+        return f"Payment(Card holder = {name}, Expiration date = {expirationDate}, Security code = {securityCode}, Amoun = {amount})"
+
+class Transaction(Resource):
+    @marshal_with(resource_fields)
+    def get(self, transaction_id):
+        result = PaymentModel.query.filter_by(id=transaction_id).first()
+        return result
+
+    @marshal_with(resource_fields)
+    def put(self, transaction_id):
         args = config.parse_args()
-        creditCardNumber = invalidCreditCardNumber(args["CreditCardNumber"])
-        invalidAmount(args["Amount"])
-        invalidExpirationDate(args["ExpirationDate"])
-        invalidSecurityCode(args["SecurityCode"])
+        Transaction = PaymentModel(
+            id=transaction_id, 
+            CreditCardNumber = args["CreditCardNumber"],
+            CardHolder=args["CardHolder"],
+            ExpirationDate=datetime.strptime(args["ExpirationDate"], "%Y-%m"), 
+            SecurityCode=args["SecurityCode"], 
+            Amount=args["Amount"],
+            PaymentGateway=args["PaymentGateway"]
+            )
 
-        args["CreditCardNumber"] = creditCardNumber
-        
-        customerInfo[customer_id] = args
-        return customerInfo[customer_id], 201
+        db.session.add(Transaction)
+        db.session.commit()
 
-    def delete(self, customer_id):
-        customerNotInDB(customer_id)
-        del customerInfo[customer_id]
-        return "", 204
+        return Transaction, 201
 
-api.add_resource(ProcessPayment, "/Customer/<int:customer_id>")
+db.create_all()
+api.add_resource(Transaction, "/transaction/<int:transaction_id>")
 
 if __name__ == "__main__":
     app.run(debug=True)
