@@ -1,8 +1,8 @@
 from flask import Flask
-from flask_restful import Resource, Api, abort, fields, marshal_with
+from flask_restful import Resource, Api, fields, marshal_with
 from flask_sqlalchemy import SQLAlchemy
 from apiArgsBuilder import buildArgsParser
-from processCreditCardNumber import isValid, formatCreditCardNumber
+from mainApiLogic import invalidAmount, invalidCreditCardNumber, invalidExpirationDate, invalidSecurityCode, gateway, invalidID
 from datetime import datetime
 import requests
 
@@ -13,30 +13,6 @@ app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///database.db"
 db = SQLAlchemy(app)
 
 config = buildArgsParser()
-
-def invalidAmount(amount):
-    if amount <= 0:
-        abort(400, message="Invalid Amount. Amount should be a float greater than 0.")
-
-def invalidCreditCardNumber(creditCardNumber):
-    if not isValid(creditCardNumber):
-        abort(400, message="Invalid credit card number.")
-    else:
-        return formatCreditCardNumber(creditCardNumber)
-
-def invalidExpirationDate(dateString):
-    try:
-        date_obj = datetime.strptime(dateString, "%Y-%m")
-        if not (date_obj > datetime.now()):
-            abort(400, message="Provided expiration date is in the past.")
-    except ValueError:
-        abort(400, message="Provided expiration date is in the wrong format.")
-
-def invalidSecurityCode(securityCode):
-    securityCode = str(securityCode).strip()
-
-    if not (securityCode.isdigit() and len(securityCode) == 3):
-        abort(400, message="Invalid security code. Security code must be provided as a string and should be a valid security code (3-digit code).")
 
 resource_fields = {
     "id" : fields.Integer,
@@ -58,6 +34,7 @@ class PaymentModel(db.Model):
     SecurityCode = db.Column(db.String(3), nullable=True)
     Amount = db.Column(db.Float, nullable=False)
     PaymentGateway = db.Column(db.String(25), nullable=False)
+
     def __repr__(self):
         return f"Payment(Card holder = {name}, Expiration date = {expirationDate}, Security code = {securityCode}, Amoun = {amount})"
 
@@ -70,14 +47,25 @@ class Transaction(Resource):
     @marshal_with(resource_fields)
     def put(self, transaction_id):
         args = config.parse_args()
+
+        invalidID(transaction_id)
+
+        invalidAmount(args["Amount"])
+        validGateway = gateway(args["Amount"])
+
+        cardNumber = invalidCreditCardNumber(args["CreditCardNumber"])
+
+        invalidExpirationDate(args["ExpirationDate"])
+        invalidSecurityCode(args["SecurityCode"])
+
         Transaction = PaymentModel(
             id=transaction_id, 
-            CreditCardNumber = args["CreditCardNumber"],
+            CreditCardNumber = cardNumber,
             CardHolder=args["CardHolder"],
             ExpirationDate=datetime.strptime(args["ExpirationDate"], "%Y-%m"), 
             SecurityCode=args["SecurityCode"], 
             Amount=args["Amount"],
-            PaymentGateway=args["PaymentGateway"]
+            PaymentGateway=validGateway
             )
 
         db.session.add(Transaction)

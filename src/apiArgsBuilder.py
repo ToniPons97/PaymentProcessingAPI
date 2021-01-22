@@ -7,5 +7,4 @@ def buildArgsParser():
     paymentArgs.add_argument("ExpirationDate", type=str, help="ExpirationDate is required and must be of type string.", required=True)
     paymentArgs.add_argument("SecurityCode", type=str, help="SecurityCode is not required but must be of type string if provided.", required=False)
     paymentArgs.add_argument("Amount", type=float, help="Amount is required (type = float).", required=True)
-    paymentArgs.add_argument("PaymentGateway", type=str, help="Payment gateway is mandatory. This field in an entry must be set by the payment gateway that handled such transaction. Must be of type string.")
     return paymentArgs
